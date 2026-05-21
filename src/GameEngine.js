@@ -83,11 +83,77 @@ class GameEngine {
     
     // Bind materials from ModelGenerator
     this.materials = ModelGenerator.materials;
+
+    // Dynamic light pool
+    this.lightPool = [];
+    this.maxLights = 24;
+
+    // Screen shake variables
+    this.screenShakeTimer = 0;
+    this.screenShakeIntensity = 0;
   }
 
   // Bind console log trigger to display logs on the screen HUD
   setLogCallback(callback) {
     this.logCallback = callback;
+  }
+
+  initLightPool() {
+    // Clear old lights if any
+    this.lightPool.forEach(l => {
+      l.active = false;
+      l.light.intensity = 0;
+      l.light.visible = false;
+      if (this.scene) {
+        this.scene.remove(l.light);
+      }
+    });
+    this.lightPool = [];
+    
+    if (!this.scene) return;
+
+    for (let i = 0; i < this.maxLights; i++) {
+      const light = new THREE.PointLight(0xffffff, 0, 4, 2);
+      light.visible = false;
+      this.scene.add(light);
+      this.lightPool.push({
+        light: light,
+        active: false,
+        targetIntensity: 0,
+        fadeRate: 1.0,
+        type: 'temp'
+      });
+    }
+  }
+
+  requestLight(pos, color, intensity, distance, decay = 2.0, type = 'temp', fadeRate = 4.0) {
+    const pooled = this.lightPool.find(l => !l.active);
+    if (!pooled) return null;
+
+    pooled.active = true;
+    pooled.light.color.setHex(color);
+    pooled.light.position.copy(pos);
+    pooled.light.distance = distance;
+    pooled.light.decay = decay;
+    pooled.light.intensity = intensity;
+    pooled.light.visible = true;
+    pooled.targetIntensity = intensity;
+    pooled.fadeRate = fadeRate;
+    pooled.type = type;
+    return pooled;
+  }
+
+  releaseLight(pooledLight) {
+    if (pooledLight) {
+      pooledLight.active = false;
+      pooledLight.light.intensity = 0;
+      pooledLight.light.visible = false;
+    }
+  }
+
+  triggerScreenShake(intensity, duration) {
+    this.screenShakeTimer = duration;
+    this.screenShakeIntensity = intensity;
   }
 
   log(msg, type = 'system') {
@@ -167,6 +233,9 @@ class GameEngine {
     // Set BGM theme
     AudioSynth.setWorldTheme(this.worldTheme);
 
+    // Initialize light pool
+    this.initLightPool();
+
     // Generate Map and calculate vectors
     const mapData = Map.generateGrid(this.worldTheme);
     this.grid = mapData.grid;
@@ -176,6 +245,7 @@ class GameEngine {
     this.airCastlePos = airData.castle3D;
 
     // Render Tile meshes in 3D
+    let lavaLightCounter = 0;
     for (let r = 0; r < Map.gridSize; r++) {
       for (let c = 0; c < Map.gridSize; c++) {
         const cell = this.grid[r][c];
@@ -183,6 +253,20 @@ class GameEngine {
         tileMesh.position.copy(cell.worldPos);
         this.scene.add(tileMesh);
         cell.mesh = tileMesh; // cache mesh ref
+
+        if (cell.type === 'start') {
+          const portalPos = cell.worldPos.clone().add(new THREE.Vector3(0, 0.6, 0));
+          this.requestLight(portalPos, 0xa81eff, 2.5, 4.5, 2.0, 'pulse');
+        } else if (cell.type === 'end') {
+          const crystalPos = cell.worldPos.clone().add(new THREE.Vector3(0, 1.4, 0));
+          this.requestLight(crystalPos, 0x00f0ff, 3.0, 5.0, 2.0, 'pulse');
+        } else if (this.worldTheme === 2 && cell.type === 'path') {
+          if (lavaLightCounter % 4 === 0) {
+            const lavaPos = cell.worldPos.clone().add(new THREE.Vector3(0, 0.5, 0));
+            this.requestLight(lavaPos, 0xff3c00, 2.0, 4.0, 2.0, 'pulse');
+          }
+          lavaLightCounter++;
+        }
       }
     }
 
@@ -302,6 +386,10 @@ class GameEngine {
       pool.forEach(p => {
         safeDispose(p.mesh);
         this.scene.remove(p.mesh);
+        if (p.light) {
+          this.releaseLight(p.light);
+          p.light = null;
+        }
       });
     };
     clearPool(this.arrowPool);
@@ -310,6 +398,17 @@ class GameEngine {
     this.arrowPool = [];
     this.cannonPool = [];
     this.frostPool = [];
+
+    // Reset light pool
+    this.lightPool.forEach(l => {
+      l.active = false;
+      l.light.intensity = 0;
+      l.light.visible = false;
+      if (this.scene) {
+        this.scene.remove(l.light);
+      }
+    });
+    this.lightPool = [];
 
     this.selectedTower = null;
     Particles.clearAll();
@@ -656,6 +755,10 @@ class GameEngine {
 
     this.enemies.push(enemyObj);
     this.waveSpawnedCount++;
+
+    if (type === 'boss') {
+      this.triggerScreenShake(0.3, 0.6);
+    }
   }
 
   // ----------------------------------------------------
@@ -686,6 +789,9 @@ class GameEngine {
           t: 0.0,
           speed: 2.2
         };
+
+        // Small wind muzzle flash
+        Particles.spawnExplosion(startPos, 3, 0xeeeeff, 0.3);
       }
     } else if (tower.type === 'cannon') {
       const proj = this.cannonPool.find(p => !p.active);
@@ -704,6 +810,10 @@ class GameEngine {
           splash: tower.stats.splashRadius,
           speed: 6.0
         };
+
+        // Cannon muzzle flash & light
+        Particles.spawnExplosion(startPos, 6, 0xffaa00, 0.6);
+        proj.light = this.requestLight(startPos, 0xffaa00, 1.8, 3.5, 2.0, 'persistent');
       }
     } else if (tower.type === 'frost') {
       const proj = this.frostPool.find(p => !p.active);
@@ -722,6 +832,10 @@ class GameEngine {
           t: 0.0,
           speed: 3.5
         };
+
+        // Frost muzzle flash & light
+        Particles.spawnExplosion(startPos, 5, 0x00f0ff, 0.5);
+        proj.light = this.requestLight(startPos, 0x00f0ff, 1.5, 3.0, 2.0, 'persistent');
       }
     }
   }
@@ -733,6 +847,29 @@ class GameEngine {
     if (!this.gameActive || this.isPaused) return;
 
     const dt = Math.min(deltaTime, 0.1) * this.speedMultiplier;
+
+    // Decrement screen shake timer
+    if (this.screenShakeTimer > 0) {
+      this.screenShakeTimer -= dt;
+      if (this.screenShakeTimer <= 0) {
+        this.screenShakeTimer = 0;
+        this.screenShakeIntensity = 0;
+      }
+    }
+
+    // Update and fade pooled lights
+    this.lightPool.forEach(l => {
+      if (!l.active) return;
+      if (l.type === 'temp') {
+        l.light.intensity -= l.fadeRate * dt;
+        if (l.light.intensity <= 0) {
+          this.releaseLight(l);
+        }
+      } else if (l.type === 'pulse') {
+        const time = this.scene ? this.scene.parentTime || Date.now() * 0.001 : Date.now() * 0.001;
+        l.light.intensity = l.targetIntensity * (0.8 + 0.2 * Math.sin(time * 10));
+      }
+    });
 
     if (this.isAttractMode) {
       if (!this.isWaveInProgress && this.spawnQueue.length === 0 && this.enemies.length === 0) {
@@ -878,6 +1015,7 @@ class GameEngine {
             AudioSynth.playWarning(); // roar sound
             Particles.spawnExplosion(enemy.mesh.position, 25, 0xff00ff, 1.5);
             Particles.spawnFloatText("ROAR!", enemy.mesh.position, 'life-lost');
+            this.triggerScreenShake(0.25, 0.5);
 
             // Apply speed buff to nearby ground enemies
             this.enemies.forEach(other => {
@@ -909,6 +1047,29 @@ class GameEngine {
 
         const data = p.data;
 
+        // Synchronize light position if active
+        if (p.light) {
+          p.light.light.position.copy(p.mesh.position);
+        }
+
+        // Spawn trails
+        if (data.type === 'cannon') {
+          if (Math.random() < 0.35) {
+            const smokeVel = new THREE.Vector3((Math.random() - 0.5) * 0.2, 0.1 + Math.random() * 0.3, (Math.random() - 0.5) * 0.2);
+            Particles.spawnParticle(p.mesh.position, smokeVel, 0x444448, 0.4, 0.6, -0.1, 0.98);
+          }
+        } else if (data.type === 'frost') {
+          if (Math.random() < 0.25) {
+            const sparkVel = new THREE.Vector3((Math.random() - 0.5) * 0.4, (Math.random() - 0.5) * 0.4, (Math.random() - 0.5) * 0.4);
+            Particles.spawnParticle(p.mesh.position, sparkVel, 0x00f0ff, 0.3, 0.4, 0.0, 0.95);
+          }
+        } else if (data.type === 'archer') {
+          if (Math.random() < 0.2) {
+            const windVel = new THREE.Vector3((Math.random() - 0.5) * 0.1, (Math.random() - 0.5) * 0.1, (Math.random() - 0.5) * 0.1);
+            Particles.spawnParticle(p.mesh.position, windVel, 0xeeeeff, 0.25, 0.3, 0.0, 0.98);
+          }
+        }
+
         if (data.type === 'cannon') {
           // Cannon direct speed lines
           const dir = new THREE.Vector3().subVectors(data.targetPos, p.mesh.position);
@@ -921,6 +1082,10 @@ class GameEngine {
             this.resolveCannonBlast(data.targetPos, data.damage, data.splash);
             p.mesh.visible = false;
             p.active = false;
+            if (p.light) {
+              this.releaseLight(p.light);
+              p.light = null;
+            }
           } else {
             dir.normalize();
             p.mesh.position.addScaledVector(dir, step);
@@ -1085,6 +1250,10 @@ class GameEngine {
   resolveHomingHit(p) {
     p.active = false;
     p.mesh.visible = false;
+    if (p.light) {
+      this.releaseLight(p.light);
+      p.light = null;
+    }
 
     const data = p.data;
     const enemy = data.target;
@@ -1107,9 +1276,10 @@ class GameEngine {
     // Hit sounds
     AudioSynth.playHit(enemy.mesh.position.x);
 
-    // Hit visual explosion
+    // Hit visual explosion & light flash
     const sparkColor = data.type === 'frost' ? 0x00f0ff : 0xe0e0ff;
     Particles.spawnExplosion(enemy.mesh.position, 6, sparkColor, 0.5);
+    this.requestLight(enemy.mesh.position, sparkColor, 2.0, 4.0, 2.0, 'temp', 6.0);
 
     // Damage numbers popup
     const popupText = isCrit ? `${Math.floor(finalDmg)} CRIT!` : `${Math.floor(finalDmg)}`;
@@ -1126,9 +1296,11 @@ class GameEngine {
   }
 
   resolveCannonBlast(impactPos, damage, radius) {
-    // Blast particles & SFX
+    // Blast particles & SFX & Light
     Particles.spawnExplosion(impactPos, 22, 0xff5500, 1.2);
     AudioSynth.playHit(impactPos.x);
+    this.requestLight(impactPos, 0xff5500, 4.0, 6.0, 2.0, 'temp', 5.0);
+    this.triggerScreenShake(0.15, 0.25);
 
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const enemy = this.enemies[i];
@@ -1181,6 +1353,15 @@ class GameEngine {
     this.enemiesKilled++;
     this.score += enemy.reward * 10;
 
+    // Explosive light flash
+    this.requestLight(enemy.mesh.position, 0x39ff14, 2.2, 4.0, 2.0, 'temp', 4.0);
+
+    if (enemy.type === 'boss') {
+      this.triggerScreenShake(0.45, 0.85);
+    } else if (enemy.type === 'golem') {
+      this.triggerScreenShake(0.12, 0.3);
+    }
+
     Particles.spawnExplosion(enemy.mesh.position, 12, 0x39ff14, 0.7);
     Particles.spawnFloatText(`+${enemy.reward}g`, enemy.mesh.position, 'gold');
 
@@ -1195,10 +1376,15 @@ class GameEngine {
     this.lives--;
     AudioSynth.playWarning();
 
-    // Red screen flash VFX
+    // Red screen flash VFX and screen shake & light flash
     const overlay = document.body;
     overlay.style.backgroundColor = '#ff0033';
     setTimeout(() => { overlay.style.backgroundColor = '#030308'; }, 100);
+
+    if (this.airCastlePos) {
+      this.requestLight(this.airCastlePos, 0xff0033, 5.0, 8.0, 2.0, 'temp', 6.0);
+    }
+    this.triggerScreenShake(0.35, 0.45);
 
     this.log(`Castle under attack! Lives remaining: ${this.lives}`, "damage");
 

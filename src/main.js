@@ -6,6 +6,8 @@ import ModelGenerator from './ModelGenerator.js';
 import Map from './Map.js';
 import Particles from './Particles.js';
 import AudioSynth from './AudioSynth.js';
+import TextureGenerator from './TextureGenerator.js';
+
 
 // Game UI Elements
 const preloader = document.getElementById('preloader');
@@ -65,6 +67,11 @@ const cheatInput = document.getElementById('cheat-input');
 let selectedWorld = 1;
 let selectedDifficulty = 1.0; // Easy: 0.8, Normal: 1.0, Hard: 1.4
 let selectedShopTower = null; // archer, cannon, frost, laser
+
+// Cinematic Timer State
+let cinematicTimer = 0;
+const CINEMATIC_DURATION = 1.5;
+
 
 // Three.js State variables
 let scene, camera, renderer, controls;
@@ -128,6 +135,8 @@ function initThree() {
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.shadowMap.enabled = shadowsEnabled;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
   document.body.appendChild(renderer.domElement);
 
   // Create OrbitControls
@@ -519,9 +528,11 @@ btnStart.addEventListener('click', () => {
   GameEngine.startLevel(scene, selectedWorld, selectedDifficulty);
 
   // 3. Reset camera and orbit controls target
-  camera.position.set(0, 12, 16);
+  // 3. Reset camera and start cinematic zoom-in
+  cinematicTimer = CINEMATIC_DURATION;
+  camera.position.set(0, 30, 40);
   controls.target.set(0, 0, 0);
-  controls.enabled = true;
+  controls.enabled = false;
 
   // 4. Update HUD values and toggle screens
   updateHUD();
@@ -538,10 +549,11 @@ btnRestart.addEventListener('click', () => {
   endScreen.classList.remove('active');
   GameEngine.startLevel(scene, selectedWorld, selectedDifficulty);
   
-  // Reset camera and orbit controls target on restart
-  camera.position.set(0, 12, 16);
+  // Reset camera and start cinematic zoom-in on restart
+  cinematicTimer = CINEMATIC_DURATION;
+  camera.position.set(0, 30, 40);
   controls.target.set(0, 0, 0);
-  controls.enabled = true;
+  controls.enabled = false;
 
   updateHUD();
 });
@@ -731,7 +743,17 @@ function animate() {
     GameEngine.update(dt);
     
     // 2. Update WebGL Particles & NDC floating labels
-    Particles.update(dt, GameEngine.speedMultiplier);
+    Particles.update(dt, GameEngine.speedMultiplier, GameEngine.worldTheme, GameEngine.gameActive && !GameEngine.isPaused);
+
+    // Scroll water and lava textures
+    const waterTex = TextureGenerator.get('water');
+    if (waterTex) {
+      waterTex.offset.y += 0.08 * dt * GameEngine.speedMultiplier;
+    }
+    const lavaTex = TextureGenerator.get('lava');
+    if (lavaTex) {
+      lavaTex.offset.y += 0.05 * dt * GameEngine.speedMultiplier;
+    }
 
     // 3. Animate Scenery & Visuals
     const time = Date.now() * 0.0015;
@@ -781,7 +803,22 @@ function animate() {
     updateHUD();
   }
 
-  if (GameEngine.isAttractMode) {
+  if (cinematicTimer > 0) {
+    controls.enabled = false;
+    cinematicTimer -= dt;
+    if (cinematicTimer < 0) cinematicTimer = 0;
+
+    const t = 1.0 - (cinematicTimer / CINEMATIC_DURATION);
+    const ease = 1 - Math.pow(1 - t, 3);
+
+    camera.position.set(
+      THREE.MathUtils.lerp(0, 0, ease),
+      THREE.MathUtils.lerp(30, 12, ease),
+      THREE.MathUtils.lerp(40, 16, ease)
+    );
+    camera.lookAt(0, 0, 0);
+    controls.target.set(0, 0, 0);
+  } else if (GameEngine.isAttractMode) {
     controls.enabled = false;
     const time = Date.now() * 0.00015;
     camera.position.x = 15 * Math.sin(time);
@@ -795,8 +832,23 @@ function animate() {
   // OrbitControls damping update
   controls.update();
 
+  // Apply Screen Shake right before rendering
+  let originalCamPos = null;
+  if (GameEngine.screenShakeTimer > 0) {
+    originalCamPos = camera.position.clone();
+    const intensity = GameEngine.screenShakeIntensity;
+    camera.position.x += (Math.random() - 0.5) * intensity;
+    camera.position.y += (Math.random() - 0.5) * intensity;
+    camera.position.z += (Math.random() - 0.5) * intensity;
+  }
+
   // Render Scene
   renderer.render(scene, camera);
+
+  // Restore camera position if shaken
+  if (originalCamPos) {
+    camera.position.copy(originalCamPos);
+  }
 }
 
 // ----------------------------------------------------

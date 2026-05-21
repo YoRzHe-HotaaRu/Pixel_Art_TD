@@ -23,15 +23,21 @@ class ParticleSystem {
 
     // Clear old elements if any
     this.pool.forEach(p => {
-      if (p.mesh.geometry) p.mesh.geometry.dispose();
       if (p.mesh.material) p.mesh.material.dispose();
       this.scene.remove(p.mesh);
     });
+    if (this.geometries) {
+      this.geometries.forEach(g => g.dispose());
+    }
     this.pool = [];
     this.poolIndex = 0;
 
-    // Pre-allocate meshes (Object Pooling)
-    const geo = new THREE.BoxGeometry(0.12, 0.12, 0.12);
+    // Pre-allocate geometries (Object Pooling)
+    const boxGeo = new THREE.BoxGeometry(0.12, 0.12, 0.12);
+    const coneGeo = new THREE.ConeGeometry(0.08, 0.16, 4);
+    const sphereGeo = new THREE.IcosahedronGeometry(0.08, 0);
+    this.geometries = [boxGeo, coneGeo, sphereGeo];
+
     for (let i = 0; i < this.maxParticles; i++) {
       // Basic glowing material
       const mat = new THREE.MeshBasicMaterial({
@@ -39,6 +45,16 @@ class ParticleSystem {
         transparent: true,
         opacity: 1.0
       });
+
+      let geo;
+      if (i % 4 === 0) {
+        geo = coneGeo;
+      } else if (i % 4 === 1) {
+        geo = sphereGeo;
+      } else {
+        geo = boxGeo;
+      }
+
       const mesh = new THREE.Mesh(geo, mat);
       mesh.visible = false;
       this.scene.add(mesh);
@@ -47,6 +63,7 @@ class ParticleSystem {
         mesh: mesh,
         material: mat,
         velocity: new THREE.Vector3(),
+        rotationVelocity: new THREE.Vector3(),
         gravity: 9.8,
         drag: 0.98,
         life: 0,
@@ -82,10 +99,77 @@ class ParticleSystem {
         Math.cos(phi) * speed
       );
 
+      p.rotationVelocity.set(
+        (Math.random() - 0.5) * 12,
+        (Math.random() - 0.5) * 12,
+        (Math.random() - 0.5) * 12
+      );
+
       p.gravity = 6.0 + Math.random() * 6.0;
       p.drag = 0.96;
       p.maxLife = 0.4 + Math.random() * 0.4;
       p.life = p.maxLife;
+    }
+  }
+
+  // Spawn a single custom particle (e.g. for trails)
+  spawnParticle(pos, velocity, colorHex = 0xffffff, sizeScale = 1.0, maxLife = 0.5, gravity = 0.0, drag = 0.98) {
+    if (!this.scene) return;
+
+    const p = this.pool[this.poolIndex];
+    this.poolIndex = (this.poolIndex + 1) % this.maxParticles;
+
+    p.mesh.position.copy(pos);
+    p.mesh.scale.setScalar(sizeScale * (0.8 + Math.random() * 0.4));
+    p.mesh.visible = true;
+
+    p.material.color.setHex(colorHex);
+    p.material.opacity = 1.0;
+
+    p.velocity.copy(velocity);
+    p.rotationVelocity.set(
+      (Math.random() - 0.5) * 10,
+      (Math.random() - 0.5) * 10,
+      (Math.random() - 0.5) * 10
+    );
+
+    p.gravity = gravity;
+    p.drag = drag;
+    p.maxLife = maxLife;
+    p.life = maxLife;
+    return p;
+  }
+
+  // Spawn atmospheric particles based on current world theme
+  spawnAtmospherics(dt, worldTheme) {
+    if (!this.scene) return;
+    
+    if (Math.random() > 12 * dt) return;
+    
+    const posX = (Math.random() - 0.5) * 16;
+    const posZ = (Math.random() - 0.5) * 16;
+    
+    if (worldTheme === 1) {
+      // Cyber-dust (green/cyan, rises slowly)
+      const posY = 0.2 + Math.random() * 2.0;
+      const pos = new THREE.Vector3(posX, posY, posZ);
+      const vel = new THREE.Vector3((Math.random() - 0.5) * 0.2, 0.3 + Math.random() * 0.3, (Math.random() - 0.5) * 0.2);
+      const color = Math.random() < 0.5 ? 0x00f0ff : 0x39ff14;
+      this.spawnParticle(pos, vel, color, 0.3 + Math.random() * 0.3, 1.2 + Math.random() * 0.8, -0.05, 0.98);
+    } else if (worldTheme === 2) {
+      // Lava embers (red/orange, rises and bobs)
+      const posY = 0.2 + Math.random() * 0.5;
+      const pos = new THREE.Vector3(posX, posY, posZ);
+      const vel = new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.8 + Math.random() * 0.8, (Math.random() - 0.5) * 0.3);
+      const color = Math.random() < 0.5 ? 0xff3c00 : 0xffaa00;
+      this.spawnParticle(pos, vel, color, 0.3 + Math.random() * 0.4, 0.8 + Math.random() * 0.6, -0.2, 0.97);
+    } else if (worldTheme === 3) {
+      // Snowflakes (white/blue, falls and drifts)
+      const posY = 6.0 + Math.random() * 2.0;
+      const pos = new THREE.Vector3(posX, posY, posZ);
+      const vel = new THREE.Vector3((Math.random() - 0.5) * 0.4, -0.5 - Math.random() * 0.5, (Math.random() - 0.5) * 0.2);
+      const color = Math.random() < 0.3 ? 0xbbe3ff : 0xffffff;
+      this.spawnParticle(pos, vel, color, 0.25 + Math.random() * 0.3, 3.0 + Math.random() * 1.5, 0.0, 0.99);
     }
   }
 
@@ -109,8 +193,13 @@ class ParticleSystem {
   }
 
   // Update loop for particles and floating text billboarding
-  update(deltaTime, speedMultiplier) {
+  update(deltaTime, speedMultiplier, worldTheme = 1, isActive = true) {
     const dt = Math.min(deltaTime, 0.1) * speedMultiplier;
+
+    // Spawn background atmospherics
+    if (isActive) {
+      this.spawnAtmospherics(dt, worldTheme);
+    }
 
     // 1. Update WebGL Particles
     this.pool.forEach(p => {
@@ -126,6 +215,13 @@ class ParticleSystem {
       p.mesh.position.addScaledVector(p.velocity, dt);
       p.velocity.y -= p.gravity * dt; // gravity
       p.velocity.multiplyScalar(Math.pow(p.drag, dt * 60)); // drag scaled by frame rate
+
+      // Rotate particle dynamically
+      if (p.rotationVelocity) {
+        p.mesh.rotation.x += p.rotationVelocity.x * dt;
+        p.mesh.rotation.y += p.rotationVelocity.y * dt;
+        p.mesh.rotation.z += p.rotationVelocity.z * dt;
+      }
 
       // Fade out and shrink towards end of life
       const ratio = p.life / p.maxLife;
