@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Retro Cyber Voxel Tower Defense</title>
+    <script>
+      (function() {
+        const originalLog = console.log;
+        const originalWarn = console.warn;
+        const originalError = console.error;
+
+        function sendLog(type, args) {
+          const msg = Array.from(args).map(arg => {
+            if (typeof arg === 'object') {
+              try { return JSON.stringify(arg); } catch (e) { return String(arg); }
+            }
+            return String(arg);
+          }).join(' ');
+          
+          originalLog(`[Intercepted ${type}]`, msg);
+          
+          fetch('http://localhost:5175/log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: type, msg: msg })
+          }).catch(err => {});
+        }
+
+        console.log = function() {
+          originalLog.apply(console, arguments);
+          sendLog('log', arguments);
+        };
+        console.warn = function() {
+          originalWarn.apply(console, arguments);
+          sendLog('warn', arguments);
+        };
+        console.error = function() {
+          originalError.apply(console, arguments);
+          sendLog('error', arguments);
+        };
+
+        window.addEventListener('error', function(e) {
+          sendLog('uncaught-error', [e.message, e.filename, e.lineno, e.colno, e.error]);
+        });
+
+        window.addEventListener('unhandledrejection', function(e) {
+          sendLog('unhandled-rejection', [e.reason]);
+        });
+        
+        document.addEventListener('click', (e) => {
+          sendLog('click', [`Clicked element: <${e.target.tagName} id="${e.target.id}" class="${e.target.className}">`]);
+        }, true);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="game-ui">
+      <!-- PRELOADER -->
+      <div id="preloader">
+        <div class="loader-label">INITIALIZING CYBERSPACE...</div>
+        <div class="loader-bar-outer">
+          <div class="loader-bar-inner" id="loader-bar"></div>
+        </div>
+        <div class="loader-tip" id="loader-tip">Procedural sound, light vectors, and voxel matrices are compiling...</div>
+      </div>
+
+      <!-- MAIN MENU -->
+      <div id="main-menu" style="display: none;">
+        <div class="title-container">
+          <div class="main-title">CYBER DEFENSE<br><span style="color: var(--neon-magenta)">VOXEL TD</span></div>
+          <div class="sub-title">PROCEDURAL RETRO EXPERIENCE</div>
+        </div>
+
+        <div class="world-select-container">
+          <div class="world-card active" data-world="1">
+            <div class="world-name">WORLD 1</div>
+            <div class="world-difficulty diff-easy">Cyber-Neon Oasis</div>
+            <div class="world-desc">A neon-drenched grid with winding pathways and cyber-rivers. Moderate speed.</div>
+          </div>
+          <div class="world-card" data-world="2">
+            <div class="world-name">WORLD 2</div>
+            <div class="world-difficulty diff-medium">Volcanic Foundry</div>
+            <div class="world-desc">Deep obsidian crusts and pathways carved from flowing, molten lava veins. High speed.</div>
+          </div>
+          <div class="world-card" data-world="3">
+            <div class="world-name">WORLD 3</div>
+            <div class="world-difficulty diff-hard">Frozen Glitch Circuit</div>
+            <div class="world-desc">An icy circuit board with high-speed pathways and frozen micro-crystals. Extreme difficulty.</div>
+          </div>
+        </div>
+
+        <div class="menu-buttons">
+          <button class="btn-retro" id="btn-start">START SESSION</button>
+          <button class="btn-retro magenta" id="btn-codex">SYSTEM CODEX</button>
+          <button class="btn-retro orange" id="btn-settings">SETTINGS</button>
+        </div>
+      </div>
+
+      <!-- HUD TOP -->
+      <div id="hud-top" style="display: none;">
+        <div class="glass-panel hud-item">
+          <div class="hud-label">CREDITS</div>
+          <div class="hud-val gold-val" id="hud-gold">160g</div>
+        </div>
+        <div class="hud-controls">
+          <div class="wave-controls">
+            <button class="btn-speed active" data-speed="1.0">1X</button>
+            <button class="btn-speed" data-speed="2.0">2X</button>
+            <button class="btn-speed" data-speed="4.0">4X</button>
+            <button class="btn-retro" id="btn-pause-toggle" style="padding: 6px 12px; font-size: 0.6rem; border-width: 1px;">PAUSE</button>
+          </div>
+        </div>
+        <div class="glass-panel hud-item">
+          <div class="hud-label">SHIELD CORE</div>
+          <div class="hud-val lives-val" id="hud-lives">20 / 20</div>
+        </div>
+        <div class="glass-panel hud-item" style="text-align: right;">
+          <div class="hud-label">THREAT WAVE</div>
+          <div class="hud-val wave-val" id="hud-wave">WAVE 0</div>
+          <div class="wave-progress-container">
+            <div class="wave-progress-bar" id="wave-progress"></div>
+          </div>
+          <button class="btn-retro" id="btn-next-wave" style="margin-top: 6px; padding: 6px 12px; font-size: 0.65rem; width: 100%;">SEND WAVE</button>
+        </div>
+      </div>
+
+      <!-- TOWER CONTEXT MENU (Floating Left) -->
+      <div id="tower-context" class="glass-panel">
+        <button class="close-btn" id="btn-context-close">×</button>
+        <div class="context-header" id="context-title">ARCHER TOWER</div>
+        <div class="context-stats">
+          <div class="stat-row"><span class="stat-label">LEVEL</span><span class="stat-val" id="context-level">1</span></div>
+          <div class="stat-row"><span class="stat-label">DAMAGE</span><span class="stat-val" id="context-damage">18</span></div>
+          <div class="stat-row"><span class="stat-label">FIRE RATE</span><span class="stat-val" id="context-firerate">1.2/s</span></div>
+          <div class="stat-row"><span class="stat-label">RANGE</span><span class="stat-val" id="context-range">3.5</span></div>
+          <div class="stat-row"><span class="stat-label">KILLS</span><span class="stat-val" id="context-kills">0</span></div>
+        </div>
+        <div class="target-select-container">
+          <div class="stat-label" style="margin-bottom: 4px;">TARGETING MODE</div>
+          <select id="context-target-mode">
+            <option value="first">FIRST</option>
+            <option value="last">LAST</option>
+            <option value="strongest">STRONGEST</option>
+            <option value="weakest">WEAKEST</option>
+          </select>
+        </div>
+        <div class="context-actions">
+          <button class="btn-retro" id="btn-upgrade" style="width: 100%; font-size: 0.65rem; padding: 8px;">UPGRADE (<span id="upgrade-cost">80</span>g)</button>
+          <button class="btn-retro magenta" id="btn-sell" style="width: 100%; font-size: 0.65rem; padding: 8px;">SELL (+<span id="sell-refund">42</span>g)</button>
+        </div>
+      </div>
+
+      <!-- HUD BOTTOM -->
+      <div id="hud-bottom" style="display: none;">
+        <!-- DIAGNOSTICS LOGS -->
+        <div class="glass-panel diagnostics-panel">
+          <div class="log-title">
+            <span>DIAGNOSTICS BOARD</span>
+            <span style="color: var(--neon-magenta)">PORT: 8080</span>
+          </div>
+          <div class="log-scroll" id="log-scroll">
+            <div class="log-entry log-system">SYSTEM initialized. Core links established.</div>
+          </div>
+          <div class="cheat-input-container">
+            <span class="cheat-prefix">&gt;</span>
+            <input type="text" class="cheat-input" id="cheat-input" placeholder="Type cheat code... (e.g. /gold, /heal, /win)" />
+          </div>
+        </div>
+
+        <!-- SHOP / BUILD CARDS -->
+        <div class="shop-container">
+          <div class="shop-card" data-tower="archer">
+            <span class="shop-card-hotkey">1</span>
+            <span class="shop-card-name">ARCHER</span>
+            <span class="shop-card-cost">60g</span>
+          </div>
+          <div class="shop-card" data-tower="cannon">
+            <span class="shop-card-hotkey">2</span>
+            <span class="shop-card-name">CANNON</span>
+            <span class="shop-card-cost">100g</span>
+          </div>
+          <div class="shop-card" data-tower="frost">
+            <span class="shop-card-hotkey">3</span>
+            <span class="shop-card-name">FROST</span>
+            <span class="shop-card-cost">90g</span>
+          </div>
+          <div class="shop-card" data-tower="laser">
+            <span class="shop-card-hotkey">4</span>
+            <span class="shop-card-name">LASER</span>
+            <span class="shop-card-cost">140g</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- BILLBOARD FLOATING DAMAGE LABELS -->
+      <div id="billboard-container"></div>
+
+      <!-- SETTINGS MODAL -->
+      <div class="overlay-modal" id="modal-settings">
+        <div class="glass-panel modal-content">
+          <button class="close-btn" id="btn-close-settings">×</button>
+          <div class="modal-header">SYSTEM SETTINGS</div>
+          
+          <div class="setting-row">
+            <div class="setting-label">BGM VOLUME</div>
+            <div class="setting-control">
+              <input type="range" id="volume-bgm" min="0" max="1" step="0.05" value="0.5" />
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">SFX VOLUME</div>
+            <div class="setting-control">
+              <input type="range" id="volume-sfx" min="0" max="1" step="0.05" value="0.6" />
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">GRAPHICS PRESET</div>
+            <div class="setting-control">
+              <select id="setting-graphics">
+                <option value="high">HIGH (SHADOWS)</option>
+                <option value="medium">MEDIUM</option>
+                <option value="low">LOW (PERF)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">MUTE ALL</div>
+            <div class="setting-control">
+              <button class="btn-retro" id="btn-mute" style="padding: 4px 12px; font-size: 0.6rem;">MUTE</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CODEX MODAL -->
+      <div class="overlay-modal" id="modal-codex">
+        <div class="glass-panel modal-content codex-content">
+          <button class="close-btn" id="btn-close-codex">×</button>
+          <div class="modal-header" style="margin-bottom: 1rem;">CYBERNETIC SYSTEM CODEX</div>
+          
+          <div class="codex-grid">
+            <div>
+              <div class="codex-section-title">DEFENSE TOWERS</div>
+              
+              <div class="codex-item">
+                <div class="codex-item-header" style="color: var(--neon-cyan)">ARCHER (60g)</div>
+                <div class="codex-item-desc">Shoots high-frequency light arrows. 12% critical hit chance dealing double damage. Hits ground and air.</div>
+              </div>
+
+              <div class="codex-item">
+                <div class="codex-item-header" style="color: var(--neon-orange)">CANNON (100g)</div>
+                <div class="codex-item-desc">Fires heavy electromagnetic plasma shells dealing splash damage. Ground units only. Slow attack speed.</div>
+              </div>
+
+              <div class="codex-item">
+                <div class="codex-item-header" style="color: var(--neon-cyan)">FROST (90g)</div>
+                <div class="codex-item-desc">Slows enemies by 50% using cryogenic energy shards. Low direct damage. Hits ground and air.</div>
+              </div>
+
+              <div class="codex-item">
+                <div class="codex-item-header" style="color: var(--neon-magenta)">LASER (140g)</div>
+                <div class="codex-item-desc">Fires continuous laser beams, dealing rapid damage to a single target. Hits ground and air.</div>
+              </div>
+            </div>
+
+            <div>
+              <div class="codex-section-title">INTRUDER THREATS</div>
+              
+              <div class="codex-item">
+                <div class="codex-item-header">SLIME</div>
+                <div class="codex-item-desc">Core data glob. Bounces along path coordinates. Average health and speed.</div>
+              </div>
+
+              <div class="codex-item">
+                <div class="codex-item-header" style="color: var(--neon-magenta)">BAT RUNNER (AIR)</div>
+                <div class="codex-item-desc">A flying threat that bypasses ground paths entirely, flying directly to the shield core. High speed, low health.</div>
+              </div>
+
+              <div class="codex-item">
+                <div class="codex-item-header" style="color: var(--neon-orange)">GOLEM</div>
+                <div class="codex-item-desc">Armor-clad heavy robot. Moves slowly but possesses high health pools. Resilient.</div>
+              </div>
+
+              <div class="codex-item">
+                <div class="codex-item-header" style="color: var(--neon-magenta)">CYBER DRAGON (BOSS)</div>
+                <div class="codex-item-desc">Massive voxel boss spawning on Wave 6. Roars periodically, buffing nearby ground units with speed and clearing slows.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- END GAME SCREEN -->
+      <div id="end-screen" class="glass-panel">
+        <div class="end-title" id="end-title">VICTORY SESSION</div>
+        <div class="end-stats">
+          <div class="stat-row"><span class="stat-label">WAVES SURVIVED</span><span class="stat-val" id="end-stat-waves">0</span></div>
+          <div class="stat-row"><span class="stat-label">ENEMIES DEFEATED</span><span class="stat-val" id="end-stat-kills">0</span></div>
+          <div class="stat-row"><span class="stat-label">FINAL SCORE</span><span class="stat-val" id="end-stat-score">0</span></div>
+        </div>
+        <div style="display: flex; gap: 1rem; width: 350px;">
+          <button class="btn-retro" id="btn-restart" style="flex: 1;">RESTART</button>
+          <button class="btn-retro magenta" id="btn-menu" style="flex: 1;">MAIN MENU</button>
+        </div>
+      </div>
+
+    </div>
+    
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
