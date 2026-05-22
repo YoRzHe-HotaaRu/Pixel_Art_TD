@@ -237,6 +237,39 @@
         </div>
       </div>
 
+      <!-- PAUSE MODAL -->
+      <div class="overlay-modal" id="modal-pause">
+        <div class="glass-panel modal-content pause-modal-content">
+          <div class="modal-header">GAME PAUSED</div>
+          
+          <div class="pause-stats-grid">
+            <div class="pause-stat-card">
+              <div class="pause-stat-label">WAVE</div>
+              <div class="pause-stat-val" id="pause-stat-wave">0</div>
+            </div>
+            <div class="pause-stat-card">
+              <div class="pause-stat-label">SHIELD CORE</div>
+              <div class="pause-stat-val" id="pause-stat-lives">20 / 20</div>
+            </div>
+            <div class="pause-stat-card">
+              <div class="pause-stat-label">CREDITS</div>
+              <div class="pause-stat-val gold-val" id="pause-stat-gold">160g</div>
+            </div>
+            <div class="pause-stat-card">
+              <div class="pause-stat-label">KILLS</div>
+              <div class="pause-stat-val" id="pause-stat-kills">0</div>
+            </div>
+          </div>
+
+          <div class="pause-actions">
+            <button class="btn-retro" id="btn-pause-resume">RESUME SESSION</button>
+            <button class="btn-retro orange" id="btn-pause-restart">RESTART LEVEL</button>
+            <button class="btn-retro magenta" id="btn-pause-settings">SYSTEM SETTINGS</button>
+            <button class="btn-retro red" id="btn-pause-exit">EXIT TO MENU</button>
+          </div>
+        </div>
+      </div>
+
       <!-- CODEX MODAL -->
       <div class="overlay-modal" id="modal-codex">
         <div class="glass-panel modal-content codex-content">
@@ -293,6 +326,15 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- WARNING PULSE VIGNETTE -->
+      <div id="warning-vignette" class="warning-vignette"></div>
+
+      <!-- COUNTDOWN ALARM OVERLAY -->
+      <div id="countdown-overlay" class="countdown-overlay" style="display: none;">
+        <div class="countdown-text">INTRUDERS DETECTED IN</div>
+        <div id="countdown-number" class="countdown-number">10</div>
       </div>
 
       <!-- END GAME SCREEN -->

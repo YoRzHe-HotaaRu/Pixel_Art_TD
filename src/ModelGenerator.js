@@ -1,9 +1,49 @@
-import * as THREE from 'three';
+import * as _THREE from 'three';
 import TextureGenerator from './TextureGenerator.js';
+
+// Cache map for geometries to avoid re-allocation stutters
+const ModelGenerator_geometries = new Map();
+
+// Helper to get or create a geometry and flag it as shared
+function getCachedGeometry(ClassRef, args) {
+  const key = ClassRef.name + '_' + JSON.stringify(args);
+  if (!ModelGenerator_geometries.has(key)) {
+    const geo = new ClassRef(...args);
+    geo.isShared = true; // Mark as shared so safeDispose in GameEngine bypasses it
+    ModelGenerator_geometries.set(key, geo);
+  }
+  return ModelGenerator_geometries.get(key);
+}
+
+// Intercept specific geometry constructors
+const geometryClasses = [
+  'BoxGeometry',
+  'CylinderGeometry',
+  'SphereGeometry',
+  'TorusGeometry',
+  'OctahedronGeometry',
+  'ConeGeometry',
+  'IcosahedronGeometry',
+  'RingGeometry',
+  'PlaneGeometry'
+];
+
+const THREE = new Proxy(_THREE, {
+  get(target, prop, receiver) {
+    if (geometryClasses.includes(prop)) {
+      const OriginalClass = target[prop];
+      return function(...args) {
+        return getCachedGeometry(OriginalClass, args);
+      };
+    }
+    return Reflect.get(target, prop, receiver);
+  }
+});
 
 class ModelGenerator {
   constructor() {
     this.materials = {};
+    this.geometries = ModelGenerator_geometries;
   }
 
   // Pre-generate standard materials based on compiled textures
@@ -117,6 +157,15 @@ class ModelGenerator {
       color: 0x111115,
       roughness: 0.75
     });
+
+    // Shared health bar materials
+    this.materials['hp_green'] = new THREE.MeshBasicMaterial({ color: 0x39ff14 });
+    this.materials['hp_orange'] = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+    this.materials['hp_red'] = new THREE.MeshBasicMaterial({ color: 0xff0055 });
+
+    // Pre-create shared geometries so they are in the cache early and marked as shared
+    this.hpBarGeometry = new THREE.BoxGeometry(0.6, 0.08, 0.02);
+    this.laserBeamGeometry = new THREE.CylinderGeometry(0.04, 0.04, 1.0, 6, 1, false);
   }
 
   // ----------------------------------------------------
@@ -415,6 +464,28 @@ class ModelGenerator {
       bowGroup.add(gear);
 
       // Level 3: Triple crossbow heads and floating target lock
+      // Level 2: Double crossbow bodies + front steel shield
+      if (level === 2) {
+        // Left mini crossbow
+        const miniL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.45), this.materials['steel']);
+        miniL.position.set(-0.2, 0.02, 0.05);
+        miniL.castShadow = true;
+        bowGroup.add(miniL);
+
+        // Right mini crossbow
+        const miniR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.45), this.materials['steel']);
+        miniR.position.set(0.2, 0.02, 0.05);
+        miniR.castShadow = true;
+        bowGroup.add(miniR);
+
+        // Steel frontal shield
+        const shieldGeo = new THREE.BoxGeometry(0.5, 0.35, 0.04);
+        const shield = new THREE.Mesh(shieldGeo, this.materials['steel']);
+        shield.position.set(0, 0.12, 0.2);
+        bowGroup.add(shield);
+      }
+
+      // Level 3: Triple crossbow heads and floating target lock
       if (level === 3) {
         // Left mini crossbow
         const miniL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.45), this.materials['steel']);
@@ -435,6 +506,12 @@ class ModelGenerator {
         lockRing.position.set(0, 0.55, 0);
         lockRing.rotation.x = Math.PI / 2;
         bowGroup.add(lockRing);
+
+        // Gold frontal shield
+        const shieldGeo = new THREE.BoxGeometry(0.65, 0.42, 0.04);
+        const shield = new THREE.Mesh(shieldGeo, this.materials['gold']);
+        shield.position.set(0, 0.12, 0.22);
+        bowGroup.add(shield);
       }
 
       turret.add(bowGroup);
@@ -474,14 +551,14 @@ class ModelGenerator {
       if (level === 1) {
         barrelGeo = new THREE.CylinderGeometry(0.14, 0.16, 0.72, 8);
       } else if (level === 2) {
-        barrelGeo = new THREE.CylinderGeometry(0.16, 0.2, 0.88, 8);
+        barrelGeo = new THREE.CylinderGeometry(0.13, 0.15, 0.82, 8);
       } else { // Level 3 Double barrel
         barrelGeo = new THREE.CylinderGeometry(0.12, 0.14, 0.95, 8);
       }
 
       const barrelMat = level === 3 ? this.materials['gold'] : this.materials['black'];
 
-      if (level < 3) {
+      if (level === 1) {
         const barrelGroupSingle = new THREE.Group();
         const barrel = new THREE.Mesh(barrelGeo, barrelMat);
         barrel.rotation.x = Math.PI / 2; // point forward
@@ -498,6 +575,24 @@ class ModelGenerator {
           barrelGroupSingle.add(fin);
         }
         barrelGroup.add(barrelGroupSingle);
+      } else if (level === 2) {
+        // Double steel barrels for Level 2
+        const b1 = new THREE.Mesh(barrelGeo, this.materials['steel']);
+        b1.rotation.x = Math.PI / 2;
+        b1.position.set(-0.14, 0, 0.4);
+        b1.castShadow = true;
+
+        const b2 = new THREE.Mesh(barrelGeo, this.materials['steel']);
+        b2.rotation.x = Math.PI / 2;
+        b2.position.set(0.14, 0, 0.4);
+        b2.castShadow = true;
+
+        // Steel barrel brace connector
+        const brace = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.15, 0.12), this.materials['steel']);
+        brace.position.set(0, 0, 0.35);
+        brace.castShadow = true;
+
+        barrelGroup.add(b1, b2, brace);
       } else {
         // Double Barrel for Lvl 3 (Rail-cannon style)
         // Rail-barrel L
@@ -518,10 +613,12 @@ class ModelGenerator {
           const coilL = new THREE.Mesh(coilGeo, this.materials['crystal']);
           coilL.position.set(-0.16, 0, 0.25 + j * 0.18);
           coilL.rotation.x = Math.PI / 2;
+          coilL.name = `coil_${j}_L`;
 
           const coilR = new THREE.Mesh(coilGeo, this.materials['crystal']);
           coilR.position.set(0.16, 0, 0.25 + j * 0.18);
           coilR.rotation.x = Math.PI / 2;
+          coilR.name = `coil_${j}_R`;
 
           barrelGroup.add(coilL, coilR);
         }
@@ -577,6 +674,21 @@ class ModelGenerator {
         orbit.userData = { angle: angle, radius: orbitRadius, speed: (i % 2 === 0 ? 1 : -1) * 1.5 };
         orbit.castShadow = true;
         crystalGroup.add(orbit);
+      }
+
+      // Level 2 & 3: Secondary inner ring of tiny spinning crystals
+      if (level >= 2) {
+        const innerCount = 3;
+        const innerRadius = 0.35;
+        const innerShardGeo = new THREE.OctahedronGeometry(0.05, 0);
+        for (let i = 0; i < innerCount; i++) {
+          const innerOrbit = new THREE.Mesh(innerShardGeo, this.materials['crystal']);
+          const angle = (i / innerCount) * Math.PI * 2;
+          innerOrbit.position.set(Math.cos(angle) * innerRadius, 0.1, Math.sin(angle) * innerRadius);
+          innerOrbit.name = `inner_shard_${i}`;
+          innerOrbit.castShadow = true;
+          crystalGroup.add(innerOrbit);
+        }
       }
 
       // Level 3 Blizzard Ring - hovering ice cloud halo
@@ -649,11 +761,17 @@ class ModelGenerator {
 
       // Floating rings orbiting at Lvl 3
       if (level === 3) {
-        const ringGeo = new THREE.TorusGeometry(0.46, 0.04, 8, 24);
-        const ring = new THREE.Mesh(ringGeo, this.materials['gold']);
-        ring.rotation.x = Math.PI / 2;
-        ring.name = "laser_ring";
-        rig.add(ring);
+        const ringGeo1 = new THREE.TorusGeometry(0.48, 0.03, 8, 24);
+        const ring1 = new THREE.Mesh(ringGeo1, this.materials['gold']);
+        ring1.rotation.x = Math.PI / 2;
+        ring1.name = "laser_ring1";
+        rig.add(ring1);
+
+        const ringGeo2 = new THREE.TorusGeometry(0.38, 0.03, 8, 24);
+        const ring2 = new THREE.Mesh(ringGeo2, this.materials['crystal']);
+        ring2.rotation.y = Math.PI / 2;
+        ring2.name = "laser_ring2";
+        rig.add(ring2);
       }
 
       turret.add(rig);

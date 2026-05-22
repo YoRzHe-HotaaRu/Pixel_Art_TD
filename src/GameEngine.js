@@ -7,7 +7,9 @@ import AudioSynth from './AudioSynth.js';
 function safeDispose(obj) {
   if (!obj) return;
   if (obj.geometry) {
-    obj.geometry.dispose();
+    if (!obj.geometry.isShared) {
+      obj.geometry.dispose();
+    }
   }
   if (obj.material) {
     const sharedMats = Object.values(ModelGenerator.materials);
@@ -60,6 +62,9 @@ class GameEngine {
     this.waveTotalCount = 0;
     this.waveSpawnedCount = 0;
     this.isWaveInProgress = false;
+    this.isCountingDown = false;
+    this.waveCountdown = 0;
+    this.lastTickTime = 10;
 
     // Selected tower for range ring visualization
     this.selectedTower = null;
@@ -225,6 +230,9 @@ class GameEngine {
     this.isPaused = false;
     this.speedMultiplier = 1.0;
     this.isWaveInProgress = false;
+    this.isCountingDown = !this.isAttractMode;
+    this.waveCountdown = this.isCountingDown ? 10.0 : 0.0;
+    this.lastTickTime = 10;
     this.spawnQueue = [];
 
     // Clear old entities
@@ -293,6 +301,8 @@ class GameEngine {
     AudioSynth.isAttractMode = true;
     this.startLevel(scene, randomTheme, 1.0);
     this.isAttractMode = true;
+    this.isCountingDown = false;
+    this.waveCountdown = 0.0;
     this.gold = 10000;
     this.autoBuildTimer = 0;
     this.log(`Started Attract Mode on World ${randomTheme}`, "system");
@@ -546,8 +556,9 @@ class GameEngine {
     this.scene.add(tower.rangeRing);
 
     // Floating text & particles
-    Particles.spawnExplosion(oldPos, 20, 0xffaa00, 1.0);
-    Particles.spawnFloatText(`LVL ${tower.level}`, oldPos, 'system');
+    const upgradeColor = tower.level === 2 ? 0x00f0ff : 0xff00ff;
+    Particles.spawnUpgradeEffect(oldPos, upgradeColor);
+    Particles.spawnFloatText("LVL " + tower.level + " UP!", oldPos, 'system');
 
     this.log(`Upgraded ${tower.type.toUpperCase()} tower to Level ${tower.level}`, "build");
   }
@@ -614,6 +625,8 @@ class GameEngine {
   startNextWave() {
     if (this.isWaveInProgress) return;
 
+    this.isCountingDown = false;
+    this.waveCountdown = 0;
     this.wave++;
     this.isWaveInProgress = true;
     this.waveSpawnedCount = 0;
@@ -731,9 +744,7 @@ class GameEngine {
     this.scene.add(eMesh);
 
     // Billboarding Floating Health Bar Core
-    const hpBarGeo = new THREE.BoxGeometry(0.6, 0.08, 0.02);
-    const hpBarMat = new THREE.MeshBasicMaterial({ color: 0x39ff14 }); // green
-    const hpBar = new THREE.Mesh(hpBarGeo, hpBarMat);
+    const hpBar = new THREE.Mesh(ModelGenerator.hpBarGeometry, ModelGenerator.materials['hp_green']);
     hpBar.position.y = type === 'boss' ? 2.5 : 1.1;
     hpBar.name = "hp_bar";
     eMesh.add(hpBar);
@@ -750,7 +761,8 @@ class GameEngine {
       waypointIdx: 0,
       slowTimer: 0,
       originalSpeed: speed,
-      dragonRoarTimer: 5.0 // specific to Boss roar
+      dragonRoarTimer: 5.0, // specific to Boss roar
+      hitScale: 1.0
     };
 
     this.enemies.push(enemyObj);
@@ -848,6 +860,25 @@ class GameEngine {
 
     const dt = Math.min(deltaTime, 0.1) * this.speedMultiplier;
 
+    // Update wave countdown
+    if (this.isCountingDown && !this.isAttractMode) {
+      this.waveCountdown -= dt;
+      const currentCeil = Math.ceil(this.waveCountdown);
+      if (currentCeil !== this.lastTickTime) {
+        if (currentCeil <= 3 && currentCeil > 0) {
+          AudioSynth.playCountdownTick(false);
+        }
+        this.lastTickTime = currentCeil;
+      }
+
+      if (this.waveCountdown <= 0) {
+        this.isCountingDown = false;
+        this.waveCountdown = 0.0;
+        AudioSynth.playCountdownTick(true);
+        this.startNextWave();
+      }
+    }
+
     // Decrement screen shake timer
     if (this.screenShakeTimer > 0) {
       this.screenShakeTimer -= dt;
@@ -897,6 +928,44 @@ class GameEngine {
     // 2. Update Active Enemies
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const enemy = this.enemies[i];
+
+      // Hit Scale Interpolation
+      if (enemy.hitScale === undefined) enemy.hitScale = 1.0;
+      enemy.hitScale += (1.0 - enemy.hitScale) * 12 * dt;
+      enemy.mesh.scale.setScalar(enemy.hitScale);
+
+      // Spawn themed trails
+      const trailChance = 6 * dt;
+      if (Math.random() < trailChance) {
+        const spawnPos = enemy.mesh.position.clone();
+        if (enemy.type === 'slime') {
+          const vel = new THREE.Vector3((Math.random() - 0.5) * 0.4, (Math.random() - 0.5) * 0.2, (Math.random() - 0.5) * 0.4);
+          Particles.spawnParticle(spawnPos, vel, 0x39ff14, 0.4, 0.4, 4.0, 0.9);
+        } else if (enemy.type === 'golem') {
+          const isEmber = Math.random() < 0.5;
+          const vel = new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.2 + Math.random() * 0.4, (Math.random() - 0.5) * 0.3);
+          Particles.spawnParticle(spawnPos, vel, isEmber ? 0xff5500 : 0x888888, isEmber ? 0.35 : 0.5, 0.6, 2.0, 0.95);
+        } else if (enemy.type === 'boss') {
+          const vel1 = new THREE.Vector3((Math.random() - 0.5) * 0.6, 0.3 + Math.random() * 0.6, (Math.random() - 0.5) * 0.6);
+          Particles.spawnParticle(spawnPos, vel1, 0xa81eff, 0.5, 0.8, -0.5, 0.96);
+          const vel2 = new THREE.Vector3((Math.random() - 0.5) * 0.6, 0.3 + Math.random() * 0.6, (Math.random() - 0.5) * 0.6);
+          Particles.spawnParticle(spawnPos, vel2, 0xa81eff, 0.5, 0.8, -0.5, 0.96);
+        } else if (enemy.type === 'runner') {
+          const jetFlame = enemy.mesh.getObjectByName("jet_flame");
+          let flamePos = spawnPos;
+          if (jetFlame) {
+            const worldPos = new THREE.Vector3();
+            jetFlame.getWorldPosition(worldPos);
+            flamePos = worldPos;
+          }
+          const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(enemy.mesh.quaternion);
+          const vel = forward.clone().multiplyScalar(-1.5);
+          vel.x += (Math.random() - 0.5) * 0.4;
+          vel.y += (Math.random() - 0.5) * 0.4;
+          vel.z += (Math.random() - 0.5) * 0.4;
+          Particles.spawnParticle(flamePos, vel, 0xffaa00, 0.4, 0.3, 0.0, 0.95);
+        }
+      }
 
       // Handle slow timer decays
       if (enemy.slowTimer > 0) {
@@ -1166,8 +1235,7 @@ class GameEngine {
         if (target) {
           // Render glowing Pink cylinder connecting turret core to enemy center
           if (!t.laserBeam) {
-            const beamGeo = new THREE.CylinderGeometry(0.04, 0.04, 1.0, 6, 1, false);
-            t.laserBeam = new THREE.Mesh(beamGeo, this.materials['laser_beam']);
+            t.laserBeam = new THREE.Mesh(ModelGenerator.laserBeamGeometry, this.materials['laser_beam']);
             this.scene.add(t.laserBeam);
           }
 
@@ -1271,6 +1339,7 @@ class GameEngine {
     }
 
     enemy.hp -= finalDmg;
+    enemy.hitScale = 0.7;
     this.updateHealthBar(enemy);
 
     // Hit sounds
@@ -1313,6 +1382,7 @@ class GameEngine {
         const finalDmg = damage * factor;
 
         enemy.hp -= finalDmg;
+        enemy.hitScale = 0.7;
         this.updateHealthBar(enemy);
 
         Particles.spawnFloatText(`${Math.floor(finalDmg)}`, enemy.mesh.position, 'damage');
@@ -1328,13 +1398,13 @@ class GameEngine {
     if (enemy.hpBar) {
       const ratio = Math.max(0, enemy.hp / enemy.maxHp);
       enemy.hpBar.scale.x = ratio;
-      // Change color based on health remaining
+      // Change color based on health remaining by switching shared material reference
       if (ratio < 0.35) {
-        enemy.hpBar.material.color.setHex(0xff0055); // red
+        enemy.hpBar.material = ModelGenerator.materials['hp_red'];
       } else if (ratio < 0.65) {
-        enemy.hpBar.material.color.setHex(0xffaa00); // orange
+        enemy.hpBar.material = ModelGenerator.materials['hp_orange'];
       } else {
-        enemy.hpBar.material.color.setHex(0x39ff14); // green
+        enemy.hpBar.material = ModelGenerator.materials['hp_green'];
       }
     }
   }
@@ -1418,6 +1488,12 @@ class GameEngine {
     Particles.spawnFloatText("WAVE COMPLETE", new THREE.Vector3(0, 3, 0), 'system');
 
     this.log(`Wave ${this.wave} complete! Clear reward: +${reward} gold.`, "system");
+
+    if (!this.isAttractMode) {
+      this.waveCountdown = 10.0;
+      this.isCountingDown = true;
+      this.lastTickTime = 10;
+    }
   }
 
   // ----------------------------------------------------

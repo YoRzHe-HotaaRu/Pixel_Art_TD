@@ -720,6 +720,31 @@ class AudioSynth {
     osc.stop(now + 0.36);
   }
 
+  // Chiptune alarm tick/beep for wave countdown
+  playCountdownTick(isFinal = false) {
+    if (this.isAttractMode) return;
+    this.ensureContextActive();
+    if (!this.ctx || this.isMuted) return;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.connect(gain);
+    gain.connect(this.sfxVolume);
+
+    const now = this.ctx.currentTime;
+    osc.type = "sine";
+    const pitch = isFinal ? 660 : 440;
+    const duration = isFinal ? 0.3 : 0.12;
+
+    osc.frequency.setValueAtTime(pitch, now);
+    gain.gain.setValueAtTime(0.3, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + duration);
+
+    osc.start(now);
+    osc.stop(now + duration + 0.01);
+  }
+
   // Victory Fanfare
   playVictory() {
     if (this.isAttractMode) return;

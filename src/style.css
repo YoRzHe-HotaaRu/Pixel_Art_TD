@@ -823,3 +823,137 @@ body {
   .diagnostics-panel { width: 100%; height: 120px; }
   #tower-context { left: 50%; top: auto; bottom: 85px; transform: translateX(-50%); width: 90%; }
 }
+
+/* COUNTDOWN & PANIC ALARM UI */
+.countdown-overlay {
+  position: absolute;
+  top: 35%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+  z-index: 100;
+  font-family: 'Press Start 2P', monospace;
+  color: var(--neon-cyan);
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.8), 0 0 20px rgba(0, 240, 255, 0.4);
+  transition: all 0.2s ease;
+}
+
+.countdown-text {
+  font-size: 0.65rem;
+  letter-spacing: 2px;
+  margin-bottom: 12px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.countdown-number {
+  font-size: 3rem;
+  font-weight: bold;
+}
+
+/* Panic styles when 3 seconds or less remain */
+.countdown-overlay.panic {
+  color: var(--neon-magenta);
+  text-shadow: 0 0 15px rgba(255, 0, 85, 0.9), 0 0 30px rgba(255, 0, 85, 0.6);
+  animation: panic-pulse 0.5s infinite alternate;
+}
+
+.countdown-overlay.panic .countdown-number {
+  font-size: 5.5rem; /* Make it massive! */
+}
+
+.warning-vignette {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 0px solid rgba(255, 0, 85, 0);
+  box-shadow: inset 0 0 0px rgba(255, 0, 85, 0);
+  pointer-events: none;
+  z-index: 99;
+  transition: all 0.2s ease;
+}
+
+.warning-vignette.active {
+  border: 5px solid rgba(255, 0, 85, 0.4);
+  box-shadow: inset 0 0 80px rgba(255, 0, 85, 0.6);
+  animation: vignette-pulse 0.5s infinite alternate;
+}
+
+@keyframes panic-pulse {
+  0% {
+    transform: translate(-50%, -50%) scale(1.0);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.15);
+  }
+}
+
+@keyframes vignette-pulse {
+  0% {
+    box-shadow: inset 0 0 40px rgba(255, 0, 85, 0.3);
+    border-color: rgba(255, 0, 85, 0.3);
+  }
+  100% {
+    box-shadow: inset 0 0 100px rgba(255, 0, 85, 0.7);
+    border-color: rgba(255, 0, 85, 0.7);
+  }
+}
+
+/* PAUSE MENU GUI OVERHAUL */
+.pause-modal-content {
+  width: 480px;
+  border: 2px solid var(--neon-magenta);
+  box-shadow: 0 0 25px rgba(255, 0, 127, 0.4), inset 0 0 15px rgba(255, 0, 127, 0.15);
+}
+
+.pause-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.pause-stat-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(0, 240, 255, 0.15);
+  border-radius: 4px;
+  padding: 0.75rem;
+  text-align: center;
+  box-shadow: inset 0 0 8px rgba(0, 240, 255, 0.05);
+}
+
+.pause-stat-label {
+  font-family: var(--font-pixel);
+  font-size: 0.55rem;
+  color: var(--neon-cyan);
+  margin-bottom: 0.4rem;
+  letter-spacing: 1px;
+}
+
+.pause-stat-val {
+  font-family: var(--font-pixel);
+  font-size: 0.95rem;
+  color: #fff;
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+}
+
+.pause-stat-val.gold-val {
+  color: var(--neon-yellow) !important;
+  text-shadow: 0 0 8px rgba(255, 230, 0, 0.3);
+}
+
+.pause-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pause-actions .btn-retro {
+  width: 100%;
+  padding: 12px;
+  font-size: 0.7rem;
+}
+
+

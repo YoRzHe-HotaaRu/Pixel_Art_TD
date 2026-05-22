@@ -11,8 +11,9 @@ class ParticleSystem {
     this.pool = [];
     this.poolIndex = 0;
 
-    // Floating HTML text labels
-    this.floatLabels = [];
+    // Floating HTML text labels pool
+    this.htmlPool = [];
+    this.htmlPoolIndex = 0;
   }
 
   // Pre-instantiate visual particles in the WebGL scene
@@ -31,6 +32,30 @@ class ParticleSystem {
     }
     this.pool = [];
     this.poolIndex = 0;
+
+    // Clear old HTML elements if any
+    if (this.htmlPool) {
+      this.htmlPool.forEach(p => p.element.remove());
+    }
+    this.htmlPool = [];
+    this.htmlPoolIndex = 0;
+
+    // Pre-create HTML elements pool if we have a container
+    if (this.container) {
+      for (let i = 0; i < 40; i++) {
+        const div = document.createElement('div');
+        div.style.display = 'none';
+        div.className = 'float-label';
+        this.container.appendChild(div);
+        this.htmlPool.push({
+          element: div,
+          active: false,
+          pos3D: new THREE.Vector3(),
+          age: 0,
+          maxAge: 45
+        });
+      }
+    }
 
     // Pre-allocate geometries (Object Pooling)
     const boxGeo = new THREE.BoxGeometry(0.12, 0.12, 0.12);
@@ -140,6 +165,37 @@ class ParticleSystem {
     return p;
   }
 
+  // Spawn a spiraling upgrade particle effect around the tower base
+  spawnUpgradeEffect(pos, colorHex = 0x00f0ff) {
+    if (!this.scene) return;
+
+    const numParticles = 45;
+    const radius = 0.55;
+    for (let i = 0; i < numParticles; i++) {
+      const angle = (i / 15) * Math.PI * 2;
+      const heightOffset = (i / numParticles) * 1.5;
+      
+      const pPos = new THREE.Vector3().copy(pos);
+      pPos.x += Math.cos(angle) * radius;
+      pPos.y += heightOffset;
+      pPos.z += Math.sin(angle) * radius;
+
+      // Velocity: spiral outward slightly, and ascend
+      const vel = new THREE.Vector3(
+        -Math.sin(angle) * 0.4 + (Math.random() - 0.5) * 0.1,
+        1.5 + Math.random() * 0.5,
+        Math.cos(angle) * 0.4 + (Math.random() - 0.5) * 0.1
+      );
+
+      this.spawnParticle(pPos, vel, colorHex, 0.4 + Math.random() * 0.4, 0.8 + Math.random() * 0.4, -0.8, 0.95);
+    }
+
+    // Trigger a medium explosion at the mid height
+    const midPos = new THREE.Vector3().copy(pos);
+    midPos.y += 0.75;
+    this.spawnExplosion(midPos, 16, colorHex, 1.2);
+  }
+
   // Spawn atmospheric particles based on current world theme
   spawnAtmospherics(dt, worldTheme) {
     if (!this.scene) return;
@@ -177,19 +233,18 @@ class ParticleSystem {
   // SCREEN BILLBOARD FLOATING TEXTS
   // ----------------------------------------------------
   spawnFloatText(text, pos3D, type = 'damage') {
-    if (!this.container) return;
+    if (!this.htmlPool || this.htmlPool.length === 0) return;
 
-    const div = document.createElement('div');
-    div.className = `float-label ${type}`;
-    div.innerText = text;
-    this.container.appendChild(div);
+    const label = this.htmlPool[this.htmlPoolIndex];
+    this.htmlPoolIndex = (this.htmlPoolIndex + 1) % this.htmlPool.length;
 
-    this.floatLabels.push({
-      element: div,
-      pos3D: pos3D.clone(),
-      age: 0,
-      maxAge: 45 // frames duration
-    });
+    label.active = true;
+    label.element.innerText = text;
+    label.element.className = `float-label ${type}`;
+    label.pos3D.copy(pos3D);
+    label.age = 0;
+    label.maxAge = 45;
+    label.element.style.display = 'block';
   }
 
   // Update loop for particles and floating text billboarding
@@ -230,19 +285,21 @@ class ParticleSystem {
     });
 
     // 2. Update HTML Text Billboards
-    if (!this.camera || !this.container) return;
+    if (!this.camera || !this.htmlPool) return;
 
     const widthHalf = window.innerWidth / 2;
     const heightHalf = window.innerHeight / 2;
     const tempV = new THREE.Vector3();
 
-    for (let i = this.floatLabels.length - 1; i >= 0; i--) {
-      const label = this.floatLabels[i];
+    for (let i = 0; i < this.htmlPool.length; i++) {
+      const label = this.htmlPool[i];
+      if (!label.active) continue;
+
       label.age += speedMultiplier;
 
       if (label.age >= label.maxAge) {
-        label.element.remove();
-        this.floatLabels.splice(i, 1);
+        label.active = false;
+        label.element.style.display = 'none';
         continue;
       }
 
@@ -271,8 +328,12 @@ class ParticleSystem {
 
   // Full clean up of all floating elements
   clearAll() {
-    this.floatLabels.forEach(label => label.element.remove());
-    this.floatLabels = [];
+    if (this.htmlPool) {
+      this.htmlPool.forEach(p => {
+        p.active = false;
+        p.element.style.display = 'none';
+      });
+    }
     this.pool.forEach(p => {
       p.mesh.visible = false;
     });

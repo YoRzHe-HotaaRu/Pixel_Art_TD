@@ -25,6 +25,9 @@ const hudWave = document.getElementById('hud-wave');
 const waveProgress = document.getElementById('wave-progress');
 const btnNextWave = document.getElementById('btn-next-wave');
 const btnPauseToggle = document.getElementById('btn-pause-toggle');
+const warningVignette = document.getElementById('warning-vignette');
+const countdownOverlay = document.getElementById('countdown-overlay');
+const countdownNumber = document.getElementById('countdown-number');
 
 // Tower Context
 const towerContext = document.getElementById('tower-context');
@@ -53,6 +56,18 @@ const volumeSfx = document.getElementById('volume-sfx');
 const settingGraphics = document.getElementById('setting-graphics');
 const btnMute = document.getElementById('btn-mute');
 
+// Pause Modal & Actions
+const modalPause = document.getElementById('modal-pause');
+const btnPauseResume = document.getElementById('btn-pause-resume');
+const btnPauseRestart = document.getElementById('btn-pause-restart');
+const btnPauseSettings = document.getElementById('btn-pause-settings');
+const btnPauseExit = document.getElementById('btn-pause-exit');
+
+const pauseStatWave = document.getElementById('pause-stat-wave');
+const pauseStatLives = document.getElementById('pause-stat-lives');
+const pauseStatGold = document.getElementById('pause-stat-gold');
+const pauseStatKills = document.getElementById('pause-stat-kills');
+
 // Main Menu Buttons & World Selection
 const btnStart = document.getElementById('btn-start');
 const btnRestart = document.getElementById('btn-restart');
@@ -72,6 +87,20 @@ let selectedShopTower = null; // archer, cannon, frost, laser
 let cinematicTimer = 0;
 const CINEMATIC_DURATION = 1.5;
 
+// HUD caching state to prevent layout/DOM thrashing
+const hudState = {
+  gold: null,
+  lives: null,
+  wave: null,
+  waveProgressWidth: null,
+  btnText: null,
+  btnDisabled: null,
+  shopCards: null,
+  countdownOverlayDisplay: null,
+  countdownOverlayPanic: null,
+  countdownNumberText: null,
+  warningVignetteActive: null
+};
 
 // Three.js State variables
 let scene, camera, renderer, controls;
@@ -318,37 +347,118 @@ function onCanvasClick(event) {
 // UI HUD & CONTEXT MENU MANAGEMENT
 // ----------------------------------------------------
 function updateHUD() {
-  hudGold.innerText = GameEngine.gold + 'g';
-  hudLives.innerText = `${GameEngine.lives} / 20`;
-  hudWave.innerText = `WAVE ${GameEngine.wave}`;
+  if (GameEngine.gold !== hudState.gold) {
+    hudState.gold = GameEngine.gold;
+    hudGold.innerText = hudState.gold + 'g';
+  }
+
+  if (GameEngine.lives !== hudState.lives) {
+    hudState.lives = GameEngine.lives;
+    hudLives.innerText = `${hudState.lives} / 20`;
+  }
+
+  if (GameEngine.wave !== hudState.wave) {
+    hudState.wave = GameEngine.wave;
+    hudWave.innerText = `WAVE ${hudState.wave}`;
+  }
 
   // Wave completion ratio progress
+  let expectedWidth = '0%';
   if (GameEngine.isWaveInProgress && GameEngine.waveTotalCount > 0) {
     const ratio = (GameEngine.waveSpawnedCount / GameEngine.waveTotalCount) * 100;
-    waveProgress.style.width = ratio + '%';
-  } else {
-    waveProgress.style.width = '0%';
+    expectedWidth = ratio + '%';
+  }
+
+  if (hudState.waveProgressWidth !== expectedWidth) {
+    hudState.waveProgressWidth = expectedWidth;
+    waveProgress.style.width = expectedWidth;
+  }
+
+  // Cache shopCards NodeList if not done already
+  if (!hudState.shopCards) {
+    hudState.shopCards = document.querySelectorAll('.shop-card');
   }
 
   // Update shop card disable states based on Gold availability
-  const shopCards = document.querySelectorAll('.shop-card');
-  shopCards.forEach(card => {
+  hudState.shopCards.forEach(card => {
     const towerType = card.dataset.tower;
     const cost = GameEngine.getTowerCost(towerType);
-    if (GameEngine.gold < cost) {
-      card.classList.add('disabled');
-    } else {
+    const canAfford = GameEngine.gold >= cost;
+    const isCurrentlyDisabled = card.classList.contains('disabled');
+
+    if (canAfford && isCurrentlyDisabled) {
       card.classList.remove('disabled');
+    } else if (!canAfford && !isCurrentlyDisabled) {
+      card.classList.add('disabled');
     }
   });
 
-  // Enable/disable Send Wave button
+  // Enable/disable Send Wave button and display countdown text
+  let btnText = "SEND WAVE";
+  let btnDisabled = false;
+
   if (GameEngine.isWaveInProgress) {
-    btnNextWave.classList.add('disabled');
-    btnNextWave.innerText = "WAVE RUNNING";
+    btnText = "WAVE RUNNING";
+    btnDisabled = true;
+  } else if (GameEngine.isCountingDown) {
+    const secondsLeft = Math.ceil(GameEngine.waveCountdown);
+    btnText = `SKIP TIMER (${secondsLeft}s)`;
+    btnDisabled = false;
+  }
+
+  if (hudState.btnText !== btnText) {
+    hudState.btnText = btnText;
+    btnNextWave.innerText = btnText;
+  }
+  if (hudState.btnDisabled !== btnDisabled) {
+    hudState.btnDisabled = btnDisabled;
+    if (btnDisabled) {
+      btnNextWave.classList.add('disabled');
+    } else {
+      btnNextWave.classList.remove('disabled');
+    }
+  }
+
+  // Update Countdown overlay and Warning vignette
+  const isCountingDown = GameEngine.isCountingDown && !GameEngine.isAttractMode;
+  const overlayDisplay = isCountingDown ? 'block' : 'none';
+  if (hudState.countdownOverlayDisplay !== overlayDisplay) {
+    hudState.countdownOverlayDisplay = overlayDisplay;
+    countdownOverlay.style.display = overlayDisplay;
+  }
+
+  if (isCountingDown) {
+    const displayVal = Math.max(0, Math.ceil(GameEngine.waveCountdown));
+    const valText = String(displayVal);
+    if (hudState.countdownNumberText !== valText) {
+      hudState.countdownNumberText = valText;
+      countdownNumber.innerText = valText;
+    }
+
+    const isPanic = GameEngine.waveCountdown <= 3.0;
+    if (hudState.countdownOverlayPanic !== isPanic) {
+      hudState.countdownOverlayPanic = isPanic;
+      if (isPanic) {
+        countdownOverlay.classList.add('panic');
+      } else {
+        countdownOverlay.classList.remove('panic');
+      }
+    }
+
+    if (hudState.warningVignetteActive !== isPanic) {
+      hudState.warningVignetteActive = isPanic;
+      if (isPanic) {
+        warningVignette.classList.add('active');
+      } else {
+        warningVignette.classList.remove('active');
+      }
+    }
   } else {
-    btnNextWave.classList.remove('disabled');
-    btnNextWave.innerText = "SEND WAVE";
+    // Reset vignette active state when not counting down
+    if (hudState.warningVignetteActive !== false) {
+      hudState.warningVignetteActive = false;
+      warningVignette.classList.remove('active');
+    }
   }
 }
 
@@ -497,12 +607,73 @@ speedBtns.forEach(btn => {
   });
 });
 
-// Pause button
-btnPauseToggle.addEventListener('click', () => {
+// Pause function and handlers
+function togglePause() {
+  if (!GameEngine.gameActive) return;
   GameEngine.isPaused = !GameEngine.isPaused;
   btnPauseToggle.innerText = GameEngine.isPaused ? "RESUME" : "PAUSE";
   btnPauseToggle.classList.toggle('active', GameEngine.isPaused);
   GameEngine.log(GameEngine.isPaused ? "Game paused." : "Game resumed.", "system");
+
+  if (GameEngine.isPaused) {
+    // Update Pause Statistics
+    pauseStatWave.innerText = `WAVE ${GameEngine.wave}`;
+    pauseStatLives.innerText = `${GameEngine.lives} / ${GameEngine.maxLives}`;
+    pauseStatGold.innerText = `${GameEngine.gold}g`;
+    pauseStatKills.innerText = `${GameEngine.enemiesKilled}`;
+
+    modalPause.classList.add('active');
+  } else {
+    modalPause.classList.remove('active');
+  }
+}
+
+// Pause button toggle click
+btnPauseToggle.addEventListener('click', togglePause);
+
+// Pause menu buttons
+btnPauseResume.addEventListener('click', togglePause);
+
+btnPauseRestart.addEventListener('click', () => {
+  // Hide pause overlay and reset toggle button states
+  GameEngine.isPaused = false;
+  btnPauseToggle.innerText = "PAUSE";
+  btnPauseToggle.classList.remove('active');
+  modalPause.classList.remove('active');
+
+  // Restart level
+  GameEngine.startLevel(scene, selectedWorld, selectedDifficulty);
+  
+  // Cinematic zoom-in
+  cinematicTimer = CINEMATIC_DURATION;
+  camera.position.set(0, 30, 40);
+  controls.target.set(0, 0, 0);
+  controls.enabled = false;
+
+  updateHUD();
+});
+
+btnPauseSettings.addEventListener('click', () => {
+  modalSettings.classList.add('active');
+});
+
+btnPauseExit.addEventListener('click', () => {
+  // Reset pause states
+  GameEngine.isPaused = false;
+  btnPauseToggle.innerText = "PAUSE";
+  btnPauseToggle.classList.remove('active');
+  modalPause.classList.remove('active');
+
+  // Hide HUD, show Main Menu
+  hudTop.style.display = 'none';
+  hudBottom.style.display = 'none';
+  mainMenu.style.display = 'flex';
+  setTimeout(() => {
+    mainMenu.style.opacity = 1;
+  }, 10);
+  
+  // Start Attract Mode again
+  GameEngine.startAttractMode(scene);
 });
 
 // ----------------------------------------------------
@@ -776,21 +947,45 @@ function animate() {
       }
     });
 
-    // 4. Rotate Frost Tower orbit shards in weapon group
+    // 4. Rotate and animate tower components
     GameEngine.towers.forEach(t => {
+      if (t.type === 'archer') {
+        const gear = t.mesh.getObjectByName("gear");
+        if (gear && t.level >= 2) {
+          gear.rotation.y += dt * 1.2 * GameEngine.speedMultiplier;
+        }
+        const targetLock = t.mesh.getObjectByName("target_lock");
+        if (targetLock && t.level === 3) {
+          targetLock.rotation.z += dt * 1.5 * GameEngine.speedMultiplier;
+          targetLock.position.y = 0.55 + Math.sin(time * 5) * 0.04;
+        }
+      }
+      if (t.type === 'cannon') {
+        if (t.level === 3) {
+          for (let j = 0; j < 4; j++) {
+            const coilL = t.mesh.getObjectByName(`coil_${j}_L`);
+            const coilR = t.mesh.getObjectByName(`coil_${j}_R`);
+            if (coilL) coilL.rotation.z += dt * 1.5 * GameEngine.speedMultiplier;
+            if (coilR) coilR.rotation.z -= dt * 1.5 * GameEngine.speedMultiplier;
+          }
+        }
+      }
       if (t.type === 'frost') {
         const weapon = t.mesh.getObjectByName("weapon");
         if (weapon) {
           weapon.rotation.y += dt * 1.6 * GameEngine.speedMultiplier;
         }
-      }
-      // Rotate Laser Tower ring node surrounding core
-      if (t.type === 'laser') {
-        const ring = t.mesh.getObjectByName("laser_ring");
-        if (ring) {
-          ring.rotation.x += dt * 2.0 * GameEngine.speedMultiplier;
-          ring.rotation.y += dt * 1.0 * GameEngine.speedMultiplier;
+        const blizzardRing = t.mesh.getObjectByName("blizzard_ring");
+        if (blizzardRing && t.level === 3) {
+          blizzardRing.rotation.z -= dt * 2.2 * GameEngine.speedMultiplier;
         }
+      }
+      if (t.type === 'laser') {
+        const ring1 = t.mesh.getObjectByName("laser_ring1");
+        const ring2 = t.mesh.getObjectByName("laser_ring2");
+        if (ring1) ring1.rotation.x += dt * 2.0 * GameEngine.speedMultiplier;
+        if (ring2) ring2.rotation.y += dt * 1.5 * GameEngine.speedMultiplier;
+
         // Bob laser core
         const core = t.mesh.getObjectByName("laser_core");
         if (core) {
